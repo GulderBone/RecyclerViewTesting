@@ -9,12 +9,18 @@ import android.util.SparseIntArray
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewGroup.MarginLayoutParams
+import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.LinearSmoothScroller
 import androidx.recyclerview.widget.RecyclerView
 import androidx.recyclerview.widget.RecyclerView.Recycler
 import kotlin.math.ceil
 
-class FixedGridLayoutManager(private val columns: Int, private val rows: Int) : RecyclerView.LayoutManager() {
+class FixedGridLayoutManager(
+    private val context: Context,
+    private val columns: Int,
+    private val rows: Int,
+    private val recyclerView: RecyclerView // Add RecyclerView as a parameter
+) : GridLayoutManager(context, columns, HORIZONTAL, false) {
 
     companion object {
         private val TAG = FixedGridLayoutManager::class.java.simpleName
@@ -54,16 +60,7 @@ class FixedGridLayoutManager(private val columns: Int, private val rows: Int) : 
         return false
     }
 
-    /*
-     * You must return true from this method if you want your
-     * LayoutManager to support anything beyond "simple" item
-     * animations. Enabling this causes onLayoutChildren() to
-     * be called twice on each animated change; once for a
-     * pre-layout, and again for the real layout.
-     */
-    override fun supportsPredictiveItemAnimations(): Boolean {
-        return false
-    }
+    override fun supportsPredictiveItemAnimations(): Boolean = false
 
     /*
      * Called by RecyclerView when a view removal is triggered. This is called
@@ -93,6 +90,9 @@ class FixedGridLayoutManager(private val columns: Int, private val rows: Int) : 
      */
     override fun onLayoutChildren(recycler: Recycler, state: RecyclerView.State) {
         // We have nothing to show for an empty data set but clear any existing views
+        Log.d(TAG, "onLayoutChildren: itemCount = ${state.itemCount}")
+        Log.d(TAG, "onLayoutChildren: childCount = $childCount")
+        Log.d(TAG, "onLayoutChildren: isPreLayout = ${state.isPreLayout}")
         if (itemCount == 0) {
             detachAndScrapAttachedViews(recycler)
             return
@@ -254,14 +254,15 @@ class FixedGridLayoutManager(private val columns: Int, private val rows: Int) : 
         emptyTop: Int = 0,
         removedPositions: SparseIntArray? = null,
     ) {
+
+        Log.d(TAG, "fillGrid: itemCount = ${state.itemCount}")
+        Log.d(TAG, "fillGrid: childCount = $childCount")
+        Log.d(TAG, "fillGrid: direction = $direction")
+        Log.d(TAG, "fillGrid: mFirstVisiblePosition = $mFirstVisiblePosition")
+
         if (mFirstVisiblePosition < 0) mFirstVisiblePosition = 0
         if (mFirstVisiblePosition >= itemCount) mFirstVisiblePosition = (itemCount - 1)
 
-        /*
-         * First, we will detach all existing views from the layout.
-         * detachView() is a lightweight operation that we can use to
-         * quickly reorder views without a full add/remove.
-         */
         val viewCache = SparseArray<View>(childCount)
         var startLeftOffset = emptyLeft
         var startTopOffset = emptyTop
@@ -274,58 +275,36 @@ class FixedGridLayoutManager(private val columns: Int, private val rows: Int) : 
                 DIRECTION_END -> startLeftOffset += mDecoratedChildWidth
             }
 
-            // Cache all views by their existing position, before updating counts
             for (i in 0 until childCount) {
                 val position = positionOfIndex(i)
                 val child = getChildAt(i)
                 viewCache.put(position, child)
             }
 
-            // Temporarily detach all views.
-            //  Views we still need will be added back at the proper index.
             for (i in 0 until viewCache.size()) {
                 detachView(viewCache.valueAt(i)!!)
             }
         }
 
-        /*
-         * Next, we advance the visible position based on the fill direction.
-         * DIRECTION_NONE doesn't advance the position in any direction.
-         */
         when (direction) {
             DIRECTION_START -> mFirstVisiblePosition--
             DIRECTION_END -> mFirstVisiblePosition++
         }
 
-        /*
-         * Next, we supply the grid of items that are deemed visible.
-         * If these items were previously there, they will simply be
-         * re-attached. New views that must be created are obtained
-         * from the Recycler and added.
-         */
         var leftOffset = startLeftOffset
         var topOffset = startTopOffset
         for (i in 0 until visibleChildCount) {
             var nextPosition = mFirstVisiblePosition + i
 
-            /*
-             * When a removal happens out of bounds, the pre-layout positions of items
-             * after the removal are shifted to their final positions ahead of schedule.
-             * We have to track off-screen removals and shift those positions back
-             * so we can properly lay out all current (and appearing) views in their
-             * initial locations.
-             */
             var offsetPositionDelta = 0
             if (state.isPreLayout) {
                 var offsetPosition = nextPosition
 
                 if (removedPositions != null) {
                     for (offset in 0 until removedPositions.size()) {
-                        // Look for off-screen removals that are less-than this
                         if (removedPositions.valueAt(offset) == REMOVE_INVISIBLE &&
                             removedPositions.keyAt(offset) < nextPosition
                         ) {
-                            // Offset position to match
                             offsetPosition--
                         }
                     }
@@ -335,37 +314,20 @@ class FixedGridLayoutManager(private val columns: Int, private val rows: Int) : 
             }
 
             if (nextPosition < 0 || nextPosition >= state.itemCount) {
-                // Item space beyond the data set, don't attempt to add a view
                 continue
             }
 
-            // Layout this position
             var view = viewCache[nextPosition]
             if (view == null) {
-                /*
-                 * The Recycler will give us either a newly constructed view,
-                 * or a recycled view it has on-hand. In either case, the
-                 * view will already be fully bound to the data by the
-                 * adapter for us.
-                 */
                 view = recycler.getViewForPosition(nextPosition)
                 addView(view)
 
-                /*
-                 * Update the new view's metadata, but only when this is a real
-                 * layout pass.
-                 */
                 if (!state.isPreLayout) {
                     val lp = view.layoutParams as LayoutParams
                     lp.row = getGlobalRowOfPosition(nextPosition)
                     lp.column = getGlobalColumnOfPosition(nextPosition)
                 }
 
-                /*
-                 * It is prudent to measure/layout each new view we
-                 * receive from the Recycler. We don't have to do
-                 * this for views we are just re-arranging.
-                 */
                 measureChildWithMargins(view, 0, 0)
                 layoutDecorated(
                     view, leftOffset, topOffset,
@@ -373,16 +335,14 @@ class FixedGridLayoutManager(private val columns: Int, private val rows: Int) : 
                     topOffset + mDecoratedChildHeight
                 )
             } else {
-                // Re-attach the cached view at its new index
                 attachView(view)
                 viewCache.remove(nextPosition)
             }
 
-            if (i % mVisibleColumnCount == (mVisibleColumnCount - 1)) {
+            if ((i + 1) % mVisibleColumnCount == 0) {
                 leftOffset = startLeftOffset
                 topOffset += mDecoratedChildHeight
 
-                // During pre-layout, on each column end, apply any additional appearing views
                 if (state.isPreLayout) {
                     val extraCount = removedPositions?.size() ?: 0
                     layoutAppearingViews(recycler, view, nextPosition, extraCount, offsetPositionDelta)
@@ -392,11 +352,6 @@ class FixedGridLayoutManager(private val columns: Int, private val rows: Int) : 
             }
         }
 
-        /*
-         * Finally, we ask the Recycler to scrap and store any views
-         * that we did not re-attach. These are views that are not currently
-         * necessary because they are no longer visible.
-         */
         for (i in 0 until viewCache.size()) {
             val removingView = viewCache.valueAt(i)
             recycler.recycleView(removingView!!)
@@ -430,45 +385,14 @@ class FixedGridLayoutManager(private val columns: Int, private val rows: Int) : 
      * to do the animation calculations.
      */
     override fun smoothScrollToPosition(recyclerView: RecyclerView, state: RecyclerView.State, position: Int) {
-        if (position >= itemCount) {
-            Log.e(TAG, "Cannot scroll to $position, item count is $itemCount")
-            return
-        }
+        val smoothScroller = object : LinearSmoothScroller(recyclerView.context) {
 
-        /*
-         * LinearSmoothScroller's default behavior is to scroll the contents until
-         * the child is fully visible. It will snap to the top-left or bottom-right
-         * of the parent depending on whether the direction of travel was positive
-         * or negative.
-         */
-        val scroller: LinearSmoothScroller = object : LinearSmoothScroller(recyclerView.context) {
-            /*
-             * LinearSmoothScroller, at a minimum, just need to know the vector
-             * (x/y distance) to travel in order to get from the current positioning
-             * to the target.
-             */
-            override fun computeScrollVectorForPosition(targetPosition: Int): PointF {
-                val rowOffset = getGlobalRowOfPosition(targetPosition) -
-                        getGlobalRowOfPosition(mFirstVisiblePosition)
-                val columnOffset = getGlobalColumnOfPosition(targetPosition) -
-                        getGlobalColumnOfPosition(mFirstVisiblePosition)
-                return PointF(
-                    columnOffset * mDecoratedChildWidth.toFloat(),
-                    rowOffset * mDecoratedChildHeight.toFloat()
-                )
+            override fun getHorizontalSnapPreference(): Int {
+                return SNAP_TO_START
             }
         }
-        scroller.targetPosition = position
-        startSmoothScroll(scroller)
-    }
-
-    /*
-     * Use this method to tell the RecyclerView if scrolling is even possible
-     * in the horizontal direction.
-     */
-    override fun canScrollHorizontally(): Boolean {
-        // We do allow scrolling
-        return true
+        smoothScroller.targetPosition = position
+        startSmoothScroll(smoothScroller)
     }
 
     /*
@@ -481,33 +405,25 @@ class FixedGridLayoutManager(private val columns: Int, private val rows: Int) : 
             return 0
         }
 
-        // Take leftmost measurements from the top-left child
         val topView = getChildAt(0)
-        // Take rightmost measurements from the top-right child
         val bottomView = getChildAt(mVisibleColumnCount - 1)
 
-        // Optimize the case where the entire data set is too small to scroll
         val viewSpan = getDecoratedRight(bottomView!!) - getDecoratedLeft(topView!!)
         if (viewSpan < width) {
-            // We cannot scroll in either direction
             return 0
         }
 
         val leftBoundReached = firstVisibleColumn == 0
         val rightBoundReached = lastVisibleColumn >= totalColumnCount
         val delta: Int =
-            if (dx > 0) { //  Contents are scrolling left
-                // Check right bound
+            if (dx > 0) {
                 if (rightBoundReached) {
-                    // If we've reached the last column, enforce limits
                     val rightOffset = width - getDecoratedRight(bottomView) + paddingRight
                     (-dx).coerceAtLeast(rightOffset)
                 } else {
-                    // No limits while the last column isn't visible
                     -dx
                 }
-            } else { //  Contents are scrolling right
-                // Check left bound
+            } else {
                 if (leftBoundReached) {
                     val leftOffset = -getDecoratedLeft(topView) + paddingLeft
                     (-dx).coerceAtMost(leftOffset)
@@ -520,24 +436,20 @@ class FixedGridLayoutManager(private val columns: Int, private val rows: Int) : 
 
         if (dx > 0) {
             if (getDecoratedRight(topView) < 0 && !rightBoundReached) {
+                mFirstVisiblePosition += columns // Move to the next column
                 fillGrid(DIRECTION_END, recycler, state)
             } else if (!rightBoundReached) {
                 fillGrid(DIRECTION_NONE, recycler, state)
             }
         } else {
             if (getDecoratedLeft(topView) > 0 && !leftBoundReached) {
+                mFirstVisiblePosition -= columns // Move to the previous column
                 fillGrid(DIRECTION_START, recycler, state)
             } else if (!leftBoundReached) {
                 fillGrid(DIRECTION_NONE, recycler, state)
             }
         }
 
-        /*
-         * Return value determines if a boundary has been reached
-         * (for edge effects and flings). If returned value does not
-         * match original delta (passed in), RecyclerView will draw
-         * an edge effect.
-         */
         return -delta
     }
 
@@ -558,11 +470,6 @@ class FixedGridLayoutManager(private val columns: Int, private val rows: Int) : 
 
     /** Boilerplate to extend LayoutParams for tracking row/column of attached views  */
 
-    /*
-     * Even without extending LayoutParams, we must override this method
-     * to provide the default layout parameters that each child view
-     * will receive when added.
-     */
     override fun generateDefaultLayoutParams(): RecyclerView.LayoutParams {
         return LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -654,9 +561,9 @@ class FixedGridLayoutManager(private val columns: Int, private val rows: Int) : 
         // Adjust each disappearing view to its proper place
         val lp = disappearingChild.layoutParams as LayoutParams
 
-        val newRow = getGlobalRowOfPosition(lp.viewAdapterPosition)
+        val newRow = getGlobalRowOfPosition(lp.bindingAdapterPosition)
         val rowDelta = newRow - lp.row
-        val newCol = getGlobalColumnOfPosition(lp.viewAdapterPosition)
+        val newCol = getGlobalColumnOfPosition(lp.bindingAdapterPosition)
         val colDelta = newCol - lp.column
 
         layoutTempChildView(disappearingChild, rowDelta, colDelta, disappearingChild)
