@@ -1,8 +1,8 @@
 package com.gulderbone.recyclerviewtesting
 
 import android.os.Bundle
+import android.util.Log
 import android.widget.Button
-import android.widget.EditText
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
@@ -19,9 +19,11 @@ import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity() {
 
-    private val itemCount = 100
+    private val itemCount = 40
     private val rows = 2
     private val columns = 5
+
+    private var currentPage = 0
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -34,7 +36,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         val recyclerView = findViewById<RecyclerView>(R.id.gridRecyclerView)
-        val gridLayoutManager1 = FixedGridLayoutManager(this, 4, 4, recyclerView)
+        val gridLayoutManager1 = FixedGridLayoutManager(this, columns, rows, recyclerView)
         val tiles = List(itemCount) { Tile(it, "${it + 1}") }
         val tileAdapter1 = TileAdapter()
 
@@ -59,11 +61,24 @@ class MainActivity : AppCompatActivity() {
         }
 
         findViewById<Button>(R.id.nextPageButton).setOnClickListener {
-            recyclerView.smoothScrollToPosition(rows * columns + 1)
+            if (currentPage < itemCount / (rows * columns)) {
+                currentPage++
+            }
+            val targetPosition = currentPage * rows * columns + 1
+            recyclerView.smoothScrollToPosition(targetPosition)
+            Log.d("MainActivity", "currentPage: $currentPage")
+            Log.d("MainActivity", "targetPosition: $targetPosition")
+
         }
 
         findViewById<Button>(R.id.previousPageButton).setOnClickListener {
-            recyclerView.smoothScrollToPosition(0)
+            if (currentPage >= 0) {
+                currentPage--
+            }
+            val targetPosition = currentPage * rows * columns + 1
+            recyclerView.smoothScrollToPosition(targetPosition)
+            Log.d("MainActivity", "currentPage: $currentPage")
+            Log.d("MainActivity", "targetPosition: $targetPosition")
         }
     }
 }

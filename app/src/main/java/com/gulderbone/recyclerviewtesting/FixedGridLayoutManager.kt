@@ -11,6 +11,7 @@ import android.view.ViewGroup
 import android.view.ViewGroup.MarginLayoutParams
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.LinearSmoothScroller
+import androidx.recyclerview.widget.OrientationHelper
 import androidx.recyclerview.widget.RecyclerView
 import androidx.recyclerview.widget.RecyclerView.Recycler
 import kotlin.math.ceil
@@ -28,11 +29,6 @@ class FixedGridLayoutManager(
         /* View Removal Constants */
         private const val REMOVE_VISIBLE = 0
         private const val REMOVE_INVISIBLE = 1
-
-        /* Fill Direction Constants */
-        private const val DIRECTION_NONE = -1
-        private const val DIRECTION_START = 0
-        private const val DIRECTION_END = 1
     }
 
     /* First (top-left) position visible at any point */
@@ -92,7 +88,6 @@ class FixedGridLayoutManager(
         // We have nothing to show for an empty data set but clear any existing views
         Log.d(TAG, "onLayoutChildren: itemCount = ${state.itemCount}")
         Log.d(TAG, "onLayoutChildren: childCount = $childCount")
-        Log.d(TAG, "onLayoutChildren: isPreLayout = ${state.isPreLayout}")
         if (itemCount == 0) {
             detachAndScrapAttachedViews(recycler)
             return
@@ -220,7 +215,7 @@ class FixedGridLayoutManager(
         detachAndScrapAttachedViews(recycler)
 
         // Fill the grid for the initial layout of views
-        fillGrid(DIRECTION_NONE, recycler, state, childLeft, childTop, removedCache)
+        fillGrid(Direction.NONE, recycler, state, childLeft, childTop, removedCache)
 
         // Evaluate any disappearing views that may exist
         if (!state.isPreLayout && recycler.scrapList.isNotEmpty()) {
@@ -247,18 +242,19 @@ class FixedGridLayoutManager(
     }
 
     private fun fillGrid(
-        direction: Int,
+        direction: Direction,
         recycler: Recycler,
         state: RecyclerView.State,
         emptyLeft: Int = 0,
         emptyTop: Int = 0,
         removedPositions: SparseIntArray? = null,
     ) {
-
         Log.d(TAG, "fillGrid: itemCount = ${state.itemCount}")
         Log.d(TAG, "fillGrid: childCount = $childCount")
         Log.d(TAG, "fillGrid: direction = $direction")
         Log.d(TAG, "fillGrid: mFirstVisiblePosition = $mFirstVisiblePosition")
+        Log.d(TAG, "fillGrid: mVisibleColumnCount = $mVisibleColumnCount")
+        Log.d(TAG, "Removed positions: $removedPositions")
 
         if (mFirstVisiblePosition < 0) mFirstVisiblePosition = 0
         if (mFirstVisiblePosition >= itemCount) mFirstVisiblePosition = (itemCount - 1)
@@ -271,8 +267,9 @@ class FixedGridLayoutManager(
             startLeftOffset = if (topView == null) 0 else getDecoratedLeft(topView)
             startTopOffset = if (topView == null) 0 else getDecoratedTop(topView)
             when (direction) {
-                DIRECTION_START -> startLeftOffset -= mDecoratedChildWidth
-                DIRECTION_END -> startLeftOffset += mDecoratedChildWidth
+                Direction.START -> startLeftOffset -= mDecoratedChildWidth
+                Direction.END -> startLeftOffset += mDecoratedChildWidth
+                Direction.NONE -> {}
             }
 
             for (i in 0 until childCount) {
@@ -287,14 +284,17 @@ class FixedGridLayoutManager(
         }
 
         when (direction) {
-            DIRECTION_START -> mFirstVisiblePosition--
-            DIRECTION_END -> mFirstVisiblePosition++
+            Direction.START -> mFirstVisiblePosition--
+            Direction.END -> mFirstVisiblePosition++
+            Direction.NONE -> {}
         }
 
         var leftOffset = startLeftOffset
         var topOffset = startTopOffset
+
         for (i in 0 until visibleChildCount) {
             var nextPosition = mFirstVisiblePosition + i
+            Log.d(TAG, "fillGrid: nextPosition = $nextPosition")
 
             var offsetPositionDelta = 0
             if (state.isPreLayout) {
@@ -318,7 +318,8 @@ class FixedGridLayoutManager(
             }
 
             var view = viewCache[nextPosition]
-            if (view == null) {
+//            if (view == null) {
+                Log.d(TAG, "fillGrid: NO CACHE nextPosition = $nextPosition")
                 view = recycler.getViewForPosition(nextPosition)
                 addView(view)
 
@@ -334,10 +335,17 @@ class FixedGridLayoutManager(
                     leftOffset + mDecoratedChildWidth,
                     topOffset + mDecoratedChildHeight
                 )
-            } else {
-                attachView(view)
-                viewCache.remove(nextPosition)
-            }
+//            } else {
+//                attachView(view)
+//                Log.d(TAG, "fillGrid: CACHE nextPosition = $nextPosition")
+//                viewCache.remove(nextPosition)
+//                measureChildWithMargins(view, 0, 0)
+//                layoutDecorated(
+//                    view, leftOffset, topOffset,
+//                    leftOffset + mDecoratedChildWidth,
+//                    topOffset + mDecoratedChildHeight
+//                )
+//            }
 
             if ((i + 1) % mVisibleColumnCount == 0) {
                 leftOffset = startLeftOffset
@@ -378,16 +386,13 @@ class FixedGridLayoutManager(
         requestLayout()
     }
 
-    /*
-     * You must override this method if you would like to support external calls
-     * to animate a change to a new adapter position. The framework provides a
-     * helper scroller implementation (LinearSmoothScroller), which we leverage
-     * to do the animation calculations.
-     */
-    override fun smoothScrollToPosition(recyclerView: RecyclerView, state: RecyclerView.State, position: Int) {
+    override fun smoothScrollToPosition(
+        recyclerView: RecyclerView,
+        state: RecyclerView.State,
+        position: Int,
+    ) {
         val smoothScroller = object : LinearSmoothScroller(recyclerView.context) {
-
-            override fun getHorizontalSnapPreference(): Int {
+            override fun getVerticalSnapPreference(): Int {
                 return SNAP_TO_START
             }
         }
@@ -437,16 +442,16 @@ class FixedGridLayoutManager(
         if (dx > 0) {
             if (getDecoratedRight(topView) < 0 && !rightBoundReached) {
                 mFirstVisiblePosition += columns // Move to the next column
-                fillGrid(DIRECTION_END, recycler, state)
+                fillGrid(Direction.END, recycler, state)
             } else if (!rightBoundReached) {
-                fillGrid(DIRECTION_NONE, recycler, state)
+                fillGrid(Direction.NONE, recycler, state)
             }
         } else {
             if (getDecoratedLeft(topView) > 0 && !leftBoundReached) {
                 mFirstVisiblePosition -= columns // Move to the previous column
-                fillGrid(DIRECTION_START, recycler, state)
+                fillGrid(Direction.START, recycler, state)
             } else if (!leftBoundReached) {
-                fillGrid(DIRECTION_NONE, recycler, state)
+                fillGrid(Direction.NONE, recycler, state)
             }
         }
 
@@ -611,4 +616,8 @@ class FixedGridLayoutManager(
     private val visibleChildCount: Int get() = mVisibleColumnCount * mVisibleRowCount
 
     private val totalRowCount: Int = rows
+}
+
+enum class Direction {
+    NONE, START, END
 }
